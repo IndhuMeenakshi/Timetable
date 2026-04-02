@@ -1,0 +1,839 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
+  <meta http-equiv="Pragma" content="no-cache" />
+  <meta http-equiv="Expires" content="0" />
+  <title>Teacher Login / Input</title>
+  <style>
+    body{font-family:Segoe UI,Arial,sans-serif;background:#f4f6f8;margin:0;padding:20px}
+    .card{max-width:820px;margin:24px auto;padding:20px;background:white;border-radius:8px;box-shadow:0 6px 18px rgba(0,0,0,.08)}
+    h1{color:#333}label{display:block;margin:12px 0 6px;color:#333;font-weight:600}
+    input,select,textarea{width:100%;padding:10px;border:1px solid #ddd;border-radius:6px}
+    .row{display:flex;gap:12px}
+    .half{flex:1}
+    button{margin-top:16px;padding:10px 16px;border:0;border-radius:6px;background:#667eea;color:#fff;font-weight:700;cursor:pointer}
+    .note{font-size:0.9rem;color:#666;margin-top:8px}
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h1>Teacher Submission</h1>
+    <button id="logoutBtn" style="float:right;margin-top:-40px">Logout</button>
+    <p class="note">Fill your teaching details and add all classes you teach</p>
+
+    <form id="teacherForm">
+      <label for="name">Full name</label>
+      <input id="name" name="name" placeholder="e.g. Dr. A. Kumar" required />
+
+      <label for="email">Email (optional)</label>
+      <input id="email" name="email" type="email" placeholder="you@school.edu" />
+
+      <label for="designation">Designation</label>
+      <select id="designation" name="designation" required>
+        <option value="">Select your designation</option>
+        <option value="professor">Professor</option>
+        <option value="professor (part time)">Professor (Part Time)</option>
+        <option value="associate professor">Associate Professor</option>
+        <option value="associate professor (part time)">Associate Professor (Part Time)</option>
+        <option value="assistant professor (sc)">Assistant Professor (SC)</option>
+        <option value="assistant professor (sc-part time)">Assistant Professor (SC-Part Time)</option>
+        <option value="assistant professor (ss)">Assistant Professor (SS)</option>
+        <option value="assistant professor (ss-part time)">Assistant Professor (SS-Part Time)</option>
+      </select>
+      <label>Preferred days (optional)</label>
+      <div id="daysPrefs" style="display:flex;gap:8px;flex-wrap:wrap;margin-top:6px">
+      </div>
+
+      <h2 style="margin-top:24px;color:#333">Classes You Teach</h2>
+      <p class="note">Add all the classes and subjects you teach. Click "Add more" to add another class.</p>
+
+      <div id="classesContainer"></div>
+
+      <button type="button" id="addClassBtn" style="margin-top:12px;background:#28a745">+ Add another class</button>
+
+      <button type="submit" style="margin-top:16px">Submit</button>
+      <p class="note">Data is stored locally in your browser (localStorage). Admin can export it.</p>
+    </form>
+  </div>
+
+  <!-- ASSIGNED SUBJECTS (from coordinator) -->
+  <div id="assignedSection" style="display:none;max-width:820px;margin:0 auto 20px;padding:20px;background:white;border-radius:8px;box-shadow:0 6px 18px rgba(0,0,0,.08)">
+    <h2 style="color:#333;margin-bottom:4px">&#128204; My Assigned Subjects</h2>
+    <p style="font-size:.85rem;color:#666;margin-bottom:16px">Subjects assigned to you by the Timetable Coordinator</p>
+    <div id="assignedSubjectsContainer"></div>
+  </div>
+
+  <!-- MY TIMETABLE (from coordinator) -->
+  <div id="timetableSection" style="display:none;max-width:820px;margin:0 auto 32px;padding:20px;background:white;border-radius:8px;box-shadow:0 6px 18px rgba(0,0,0,.08)">
+    <h2 style="color:#333;margin-bottom:4px">&#128197; My Timetable</h2>
+    <p style="font-size:.85rem;color:#666;margin-bottom:16px">Your weekly schedule as set by the coordinator</p>
+    <div style="overflow-x:auto"><table id="myTimetable" style="width:100%;border-collapse:collapse;min-width:640px"></table></div>
+  </div>
+
+  <script>
+    // Session validation - redirect to login if not authenticated
+    if (sessionStorage.getItem('portal_role') !== 'faculty') {
+      window.location.href = 'index.html';
+    }
+
+    const SUBJECTS_KEY = 'curriculum_subjects';
+    let classCardCount = 0;
+
+    function safeGetJSON(key, defaultVal) {
+      try {
+        const raw = localStorage.getItem(key);
+        if (raw === null || raw === undefined) return defaultVal;
+        return JSON.parse(raw);
+      } catch (err) {
+        console.error('safeGetJSON parse error for', key, err);
+        try { localStorage.setItem(key, JSON.stringify(defaultVal)); } catch (e) { }
+        return defaultVal;
+      }
+    }
+
+    function safeGetJSONNoWrite(key, defaultVal) {
+      try {
+        const raw = localStorage.getItem(key);
+        if (raw === null || raw === undefined) return defaultVal;
+        return JSON.parse(raw);
+      } catch (err) {
+        console.error('safeGetJSONNoWrite parse error for', key, err);
+        return defaultVal;
+      }
+    }
+
+    function initializeSubjects() {
+      const sections = {
+        'ODD': ['BCA_A', 'BCA_B', 'BCA_C', 'MCA_A', 'MCA_B'],
+        'EVEN': ['BCA_A', 'BCA_B', 'BCA_C', 'MCA_A', 'MCA_B']
+      };
+      const years = ['Y1','Y2','Y3'];
+      const specsY3 = [
+        { key: 'CYBER_SECURITY', label: 'Cyber Security' },
+        { key: 'MULTIMEDIA', label: 'Multimedia' },
+        { key: 'GENERAL', label: 'General' }
+      ];
+
+      const defaults = {};
+      Object.keys(sections).forEach(sem => {
+        sections[sem].forEach(sec => {
+          years.forEach(y => {
+            // Skip Y3 for MCA (only has 2 years)
+            if (sec.startsWith('MCA') && y === 'Y3') {
+              return;
+            }
+            
+            if (y === 'Y3') {
+              // Create specialization keys for year 3
+              specsY3.forEach(s => {
+                const key = sem + '_' + sec + '_' + y + '_' + s.key;
+                if (s.key === 'CYBER_SECURITY') {
+                  if (sem === 'ODD') {
+                    defaults[key] = ['Networking tools','Advanced Networking','Hacking Basics','Operating Systems','Secure Programming'];
+                  } else {
+                    defaults[key] = ['Cryptography','Web Security','Cyber Laws & Ethics','Ethical Hacking','Digital Forensics'];
+                  }
+                } else if (s.key === 'MULTIMEDIA') {
+                  if (sem === 'ODD') {
+                    defaults[key] = ['Introduction to Multimedia','Graphic Design Fundamentals','Digital Image Processing','Web Design & Development','2D Animation'];
+                  } else {
+                    defaults[key] = ['3D Animation Basics','Audio & Video Editing','UI/UX Design','Multimedia Systems','Digital Marketing Basics'];
+                  }
+                } else if (s.key === 'GENERAL') {
+                  if (sem === 'ODD') {
+                    defaults[key] = ['Web Technology','Computer Graphics','Software Engineering','Computer Organization & Architecture','Web Security'];
+                  } else {
+                    defaults[key] = ['UI/UX Design','Multimedia Systems','Cryptography','Introduction to Multimedia','Introduction to Cyber Security'];
+                  }
+                } else {
+                  defaults[key] = [];
+                }
+              });
+            } else {
+              const key = sem + '_' + sec + '_' + y;
+              if (sec.startsWith('MCA')) {
+                if (y === 'Y1') {
+                  if (sem === 'ODD') {
+                    defaults[key] = ['Statistics','Computer Networks','Python','Java','Advanced Data Structure','Accounts'];
+                  } else {
+                    defaults[key] = ['Machine Learning','Full Stack Development','Research Methodology','Software Design','Elective - Blockchain','Elective - Cloud Basics','Elective - Data Visualization','Nptel 1'];
+                  }
+                } else {
+                  defaults[key] = ['Advanced Algorithms','Machine Learning','Distributed Systems','Artificial Intelligence'];
+                }
+              } else {
+                if (y === 'Y1') {
+                  if (sem === 'ODD') {
+                    defaults[key] = ['Statistics','Accounts','English','C','C++','Computer Concepts'];
+                  } else {
+                    defaults[key] = ['English','Communication','Web Designing','Python','Problem Solving Techniques'];
+                  }
+                } else if (y === 'Y2') {
+                  if (sem === 'ODD') {
+                    defaults[key] = ['Java','Advanced Python','Data Structure','Computer Networks','Nptel Course 1'];
+                  } else {
+                    defaults[key] = ['PHP','Enterprise Resource Management','Advanced Computer Networks','Database Management','Nptel Course 2'];
+                  }
+                }
+              }
+            }
+          });
+        });
+      });
+
+      let existing = safeGetJSON(SUBJECTS_KEY, {});
+      let changed = false;
+      Object.keys(defaults).forEach(k => {
+        if (!Array.isArray(existing[k]) || existing[k].join(',') !== defaults[k].join(',')) {
+          existing[k] = defaults[k].slice();
+          changed = true;
+        }
+      });
+      Object.keys(existing).forEach(k => {
+        if (!(k in defaults)) {
+          delete existing[k];
+          changed = true;
+        }
+      });
+      if (changed || !localStorage.getItem(SUBJECTS_KEY)) {
+        localStorage.setItem(SUBJECTS_KEY, JSON.stringify(existing));
+      }
+    }
+
+    function getSubjects() {
+      initializeSubjects();
+      return safeGetJSON(SUBJECTS_KEY, {});
+    }
+
+    function createDaysCheckboxes() {
+      const container = document.getElementById('daysPrefs');
+      const days = ['Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
+      days.forEach(d => {
+        const id = 'd_' + d;
+        const wrapper = document.createElement('label');
+        wrapper.style.display = 'flex'; wrapper.style.alignItems = 'center'; wrapper.style.gap = '6px';
+        const cb = document.createElement('input'); cb.type = 'checkbox'; cb.id = id; cb.value = d;
+        wrapper.appendChild(cb);
+        const span = document.createElement('span'); span.textContent = d; wrapper.appendChild(span);
+        container.appendChild(wrapper);
+      });
+    }
+
+    // helper to get subjects for a specific class config
+    function getSubjectsForClass(classType, section, year, semester, spec) {
+      const subjects = getSubjects();
+      let key = semester + '_' + section + '_' + year;
+      if (classType === 'UG' && year === 'Y3' && spec) {
+        key += '_' + spec;
+      }
+      return subjects[key] || [];
+    }
+
+    // Get assigned subjects for a specific class configuration (from OTHER teachers in localStorage)
+    // Checks across all sections for the same year/semester combo
+    function getAssignedSubjectsForClass(classType, year, semester, spec) {
+      const teachersData = safeGetJSONNoWrite('teachers_data', []);
+      const assignedSubjects = new Set();
+      
+      teachersData.forEach(teacher => {
+        if (!teacher.classes) return;
+        teacher.classes.forEach(cls => {
+          if (cls.classType === classType && 
+              cls.year === year && 
+              cls.semester === semester &&
+              (!spec || cls.specialization === spec)) {
+            cls.subjects.forEach(subject => assignedSubjects.add(subject));
+          }
+        });
+      });
+      
+      return assignedSubjects;
+    }
+
+    // Get subjects selected in current form by THIS teacher in other class cards
+    function getSubjectsSelectedInOtherCards(excludeCardId, classType, year, semester, spec) {
+      const selectedSubjects = new Set();
+      const cards = document.querySelectorAll('[id^="classCard_"]');
+      
+      cards.forEach(card => {
+        if (card.id === excludeCardId) return;
+        
+        const cardClassType = card.querySelector('select[data-classtype]').value;
+        const cardYear = card.querySelector('select[data-year]').value;
+        const cardSemester = card.querySelector('select[data-semester]').value;
+        const cardSpec = card.querySelector('select[data-spec]') ? card.querySelector('select[data-spec]').value : '';
+        
+        if (cardClassType === classType && 
+            cardYear === year && 
+            cardSemester === semester &&
+            (!spec || cardSpec === spec)) {
+          // read from hidden JSON input (preference picker)
+          const hidden = card.querySelector('input[data-subjects]');
+          if (hidden && hidden.value) {
+            try {
+              const prefData = JSON.parse(hidden.value);
+              Object.keys(prefData).forEach(s => selectedSubjects.add(s));
+            } catch(e) {}
+          }
+        }
+      });
+      
+      return selectedSubjects;
+    }
+
+    // populate subject dropdown for a specific class card
+    function populateSubjectsForCard(cardId) {
+      const card = document.getElementById('classCard_' + cardId);
+      if (!card) return;
+      const sel = card.querySelector('select[data-subjects]');
+      if (!sel) return;
+      
+      const classType = card.querySelector('select[data-classtype]').value;
+      const section = card.querySelector('select[data-section]').value;
+      const year = card.querySelector('select[data-year]').value;
+      const semester = card.querySelector('select[data-semester]').value;
+      const spec = card.querySelector('select[data-spec]') ? card.querySelector('select[data-spec]').value : '';
+      
+      sel.innerHTML = '';
+      const allSubjects = getSubjectsForClass(classType, section, year, semester, spec);
+      const assignedByOthers = getAssignedSubjectsForClass(classType, year, semester, spec);
+      const assignedByThisTeacher = getSubjectsSelectedInOtherCards('classCard_' + cardId, classType, year, semester, spec);
+      
+      allSubjects.forEach(s => {
+        const opt = document.createElement('option');
+        opt.value = s;
+        if (assignedByOthers.has(s)) {
+          opt.textContent = s + ' (ASSIGNED TO ANOTHER TEACHER)';
+          opt.disabled = true;
+          opt.style.color = '#999';
+        } else if (assignedByThisTeacher.has(s)) {
+          opt.textContent = s + ' (YOU SELECTED IN ANOTHER CLASS)';
+          opt.disabled = true;
+          opt.style.color = '#999';
+        } else {
+          opt.textContent = s;
+        }
+        sel.appendChild(opt);
+      });
+    }
+
+    // render a single class card
+    function renderClassCard(cardId) {
+      const container = document.getElementById('classesContainer');
+      const card = document.createElement('div');
+      card.id = 'classCard_' + cardId;
+      card.style.border = '1px solid #ddd';
+      card.style.borderRadius = '6px';
+      card.style.padding = '12px';
+      card.style.marginBottom = '12px';
+      card.style.background = '#f9f9f9';
+      
+      const header = document.createElement('h3');
+      header.style.margin = '0 0 12px';
+      header.style.color = '#333';
+      header.textContent = 'Class ' + cardId;
+      card.appendChild(header);
+
+      // row 1: class type, section
+      const row1 = document.createElement('div');
+      row1.className = 'row';
+      row1.innerHTML = `
+        <div class="half">
+          <label>Class type</label>
+          <select data-classtype required>
+            <option value="UG">UG</option>
+            <option value="PG">PG</option>
+          </select>
+        </div>
+        <div class="half">
+          <label>Section</label>
+          <select data-section required>
+            <option value="BCA_A">BCA A</option>
+            <option value="BCA_B">BCA B</option>
+            <option value="BCA_C">BCA C</option>
+            <option value="MCA_A">MCA A</option>
+            <option value="MCA_B">MCA B</option>
+          </select>
+        </div>
+      `;
+      card.appendChild(row1);
+
+      // row 2: year, semester
+      const row2 = document.createElement('div');
+      row2.className = 'row';
+      row2.innerHTML = `
+        <div class="half">
+          <label>Year</label>
+          <select data-year required>
+            <option value="Y1">1</option>
+            <option value="Y2">2</option>
+            <option value="Y3">3</option>
+          </select>
+        </div>
+        <div class="half">
+          <label>Semester</label>
+          <select data-semester required>
+            <option value="ODD">Odd</option>
+            <option value="EVEN">Even</option>
+          </select>
+        </div>
+      `;
+      card.appendChild(row2);
+
+      // row 3: specialization (hidden by default)
+      const specRow = document.createElement('div');
+      specRow.className = 'row';
+      specRow.style.display = 'none';
+      specRow.style.marginTop = '8px';
+      specRow.innerHTML = `
+        <div class="half">
+          <label>Specialization (3rd year UG)</label>
+          <select data-spec>
+            <option value="">-- Select specialization --</option>
+            <option value="CYBER_SECURITY">Cyber Security</option>
+            <option value="MULTIMEDIA">Multimedia</option>
+            <option value="GENERAL">General</option>
+          </select>
+        </div>
+      `;
+      card.appendChild(specRow);
+
+
+
+      // ── PREFERENCE-RANKED SUBJECT PICKER ──
+      const subjLabel = document.createElement('label');
+      subjLabel.textContent = 'Select subjects & set preference (1 = most preferred)';
+      subjLabel.style.marginTop = '14px';
+      card.appendChild(subjLabel);
+
+      // hidden input stores JSON: { "SubjectName": { preference: N }, ... }
+      const subjHidden = document.createElement('input');
+      subjHidden.type = 'hidden';
+      subjHidden.setAttribute('data-subjects', 'true');
+      card.appendChild(subjHidden);
+
+      // picker wrapper
+      const pickerWrap = document.createElement('div');
+      pickerWrap.setAttribute('data-pref-picker', 'true');
+      pickerWrap.style.cssText = 'border:1px solid #ddd;border-radius:8px;overflow:hidden;margin-top:4px;';
+      pickerWrap.innerHTML = `
+        <div style="display:grid;grid-template-columns:1fr 120px;background:#f7f9fc;padding:8px 12px;font-size:.75rem;color:#888;font-weight:700;text-transform:uppercase;letter-spacing:.04em;border-bottom:1px solid #eee;">
+          <span>Subject</span><span style="text-align:center">Preference #</span>
+        </div>
+        <div data-subj-rows style="max-height:280px;overflow-y:auto;"></div>`;
+      card.appendChild(pickerWrap);
+
+      const prefNote = document.createElement('p');
+      prefNote.className = 'note';
+      prefNote.textContent = 'Tick a subject to include it. Use − / + to set preference (1 = top choice).';
+      card.appendChild(prefNote);
+
+      // build/rebuild picker rows for this card
+      function buildSubjectRows(cId) {
+        const c = document.getElementById('classCard_' + cId);
+        if (!c) return;
+        const rowsDiv = c.querySelector('[data-subj-rows]');
+        const hidden  = c.querySelector('input[data-subjects]');
+        const ct  = c.querySelector('select[data-classtype]').value;
+        const sec = c.querySelector('select[data-section]').value;
+        const yr  = c.querySelector('select[data-year]').value;
+        const sem = c.querySelector('select[data-semester]').value;
+        const sp  = c.querySelector('select[data-spec]') ? c.querySelector('select[data-spec]').value : '';
+
+        const allSubjs     = getSubjectsForClass(ct, sec, yr, sem, sp);
+        const takenOthers  = getAssignedSubjectsForClass(ct, yr, sem, sp);
+        const takenMe      = getSubjectsSelectedInOtherCards('classCard_' + cId, ct, yr, sem, sp);
+
+        // preserve existing selections
+        let current = {};
+        try { current = JSON.parse(hidden.value || '{}'); } catch(e) {}
+
+        rowsDiv.innerHTML = '';
+        if (!allSubjs.length) {
+          rowsDiv.innerHTML = '<p style="padding:12px;color:#aaa;font-size:.85rem;">No subjects for this combination.</p>';
+          return;
+        }
+
+        function syncHidden() {
+          const out = {};
+          rowsDiv.querySelectorAll('[data-row-subj]').forEach(r => {
+            const chk = r.querySelector('input[type=checkbox]');
+            const pv  = r.querySelector('[data-pref-val]');
+            if (chk && chk.checked) {
+              out[r.getAttribute('data-row-subj')] = { preference: parseInt(pv ? pv.textContent : '1') || 1 };
+            }
+          });
+          hidden.value = JSON.stringify(out);
+        }
+
+        allSubjs.forEach((subj, idx) => {
+          const isTakenOther = takenOthers.has(subj);
+          const isTakenMe    = takenMe.has(subj);
+          const disabled     = isTakenMe; // still prevent selecting same subject multiple times in own cards
+          const isChecked    = !!current[subj];
+          const prefVal      = (current[subj] && current[subj].preference) || (idx + 1);
+
+          const row = document.createElement('div');
+          row.setAttribute('data-row-subj', subj);
+          row.style.cssText = `display:grid;grid-template-columns:1fr 120px;align-items:center;padding:9px 12px;border-bottom:1px solid #f0f0f0;background:${isChecked?'#f0f6ff':'#fff'};transition:background .15s;`;
+
+          const checkId = `chk_${cId}_${idx}`;
+          const labelColor = isTakenOther ? '#e67e22' : '#333';
+          const tagHtml = isTakenOther ? `<span style="font-size:.7rem;color:#e67e22;margin-left:4px">(also preferred by other teachers)</span>` : '';
+
+          row.innerHTML = `
+            <label for="${checkId}" style="display:flex;align-items:center;gap:10px;cursor:${disabled?'not-allowed':'pointer'};opacity:${disabled?0.7:1};">
+              <input type="checkbox" id="${checkId}" ${isChecked?'checked':''} ${disabled?'disabled':''} style="width:16px;height:16px;cursor:${disabled?'not-allowed':'pointer'};flex-shrink:0;"/>
+              <span style="font-size:.88rem;font-weight:${isChecked?'600':'400'};color:${labelColor};">${subj}${tagHtml}</span>
+            </label>
+            <div style="display:flex;align-items:center;justify-content:center;gap:4px;">
+              ${!disabled ? `
+                <button type="button" data-pref-dec style="width:24px;height:24px;border:1px solid #ddd;border-radius:4px;background:#fff;cursor:pointer;font-size:1rem;line-height:1;color:#555;">−</button>
+                <span data-pref-val style="min-width:28px;text-align:center;font-weight:700;font-size:.9rem;color:#2563a8;">${isChecked ? prefVal : '—'}</span>
+                <button type="button" data-pref-inc style="width:24px;height:24px;border:1px solid #ddd;border-radius:4px;background:#fff;cursor:pointer;font-size:1rem;line-height:1;color:#555;">+</button>
+              ` : `<span style="font-size:.8rem;color:#ccc;">—</span>`}
+            </div>`;
+
+          const chk     = row.querySelector('input[type=checkbox]');
+          const pvSpan  = row.querySelector('[data-pref-val]');
+          const decBtn  = row.querySelector('[data-pref-dec]');
+          const incBtn  = row.querySelector('[data-pref-inc]');
+
+          if (chk) {
+            chk.addEventListener('change', function() {
+              row.style.background = this.checked ? '#f0f6ff' : '#fff';
+              if (pvSpan) pvSpan.textContent = this.checked ? prefVal : '—';
+              const lbl = row.querySelector('label span');
+              if (lbl) lbl.style.fontWeight = this.checked ? '600' : '400';
+              syncHidden();
+            });
+          }
+          if (decBtn) {
+            decBtn.addEventListener('click', function() {
+              if (!chk || !chk.checked || !pvSpan) return;
+              const cur = parseInt(pvSpan.textContent) || 1;
+              if (cur > 1) { pvSpan.textContent = cur - 1; syncHidden(); }
+            });
+          }
+          if (incBtn) {
+            incBtn.addEventListener('click', function() {
+              if (!chk || !chk.checked || !pvSpan) return;
+              const cur = parseInt(pvSpan.textContent) || 1;
+              if (cur >= 5) {
+                alert('Preference number is limited to 1 through 5.');
+                return;
+              }
+              pvSpan.textContent = cur + 1; syncHidden();
+            });
+          }
+
+          rowsDiv.appendChild(row);
+        });
+
+        syncHidden();
+      }
+
+      card._buildSubjectRows = () => buildSubjectRows(cardId);
+      buildSubjectRows(cardId);
+
+      // remove button
+      const removeBtn = document.createElement('button');
+      removeBtn.type = 'button';
+      removeBtn.style.background = '#e74c3c';
+      removeBtn.style.marginTop = '8px';
+      removeBtn.textContent = 'Remove this class';
+      removeBtn.onclick = () => removeClassCard(cardId);
+      card.appendChild(removeBtn);
+
+      container.appendChild(card);
+
+      // attach event listeners for this card
+      const classTypeSel = card.querySelector('select[data-classtype]');
+      const sectionSel = card.querySelector('select[data-section]');
+      const yearSel = card.querySelector('select[data-year]');
+      const semesterSel = card.querySelector('select[data-semester]');
+      const specSel = card.querySelector('select[data-spec]');
+
+      const updateCard = () => {
+        const ct = classTypeSel.value;
+        if (ct === 'UG') {
+          sectionSel.innerHTML = '<option value="BCA_A">BCA A</option><option value="BCA_B">BCA B</option><option value="BCA_C">BCA C</option>';
+          yearSel.innerHTML = '<option value="Y1">1</option><option value="Y2">2</option><option value="Y3">3</option>';
+          yearSel.value = 'Y1';
+        } else {
+          sectionSel.innerHTML = '<option value="MCA_A">MCA A</option><option value="MCA_B">MCA B</option>';
+          yearSel.innerHTML = '<option value="Y1">1</option><option value="Y2">2</option>';
+          yearSel.value = 'Y1';
+        }
+        // show/hide specialization
+        if (ct === 'UG' && yearSel.value === 'Y3') {
+          specRow.style.display = 'flex';
+        } else {
+          specRow.style.display = 'none';
+        }
+        card._buildSubjectRows && card._buildSubjectRows();
+      };
+
+      classTypeSel.addEventListener('change', updateCard);
+      sectionSel.addEventListener('change', () => card._buildSubjectRows && card._buildSubjectRows());
+      yearSel.addEventListener('change', () => {
+        if (classTypeSel.value === 'UG' && yearSel.value === 'Y3') {
+          specRow.style.display = 'flex';
+        } else {
+          specRow.style.display = 'none';
+        }
+        card._buildSubjectRows && card._buildSubjectRows();
+      });
+      semesterSel.addEventListener('change', () => card._buildSubjectRows && card._buildSubjectRows());
+      specSel.addEventListener('change', () => card._buildSubjectRows && card._buildSubjectRows());
+
+      updateCard();
+    }
+
+    function addClassCard() {
+      classCardCount++;
+      renderClassCard(classCardCount);
+    }
+
+    function removeClassCard(cardId) {
+      const card = document.getElementById('classCard_' + cardId);
+      if (card) card.remove();
+    }
+
+    document.getElementById('addClassBtn').addEventListener('click', addClassCard);
+
+    document.getElementById('teacherForm').addEventListener('submit', function(e) {
+      e.preventDefault();
+      const name = document.getElementById('name').value.trim();
+      const email = document.getElementById('email').value.trim();
+      const designation = document.getElementById('designation').value.trim();
+      const days = Array.from(document.querySelectorAll('#daysPrefs input[type=checkbox]:checked')).map(i=>i.value);
+
+      if (!name) { alert('Please enter your name.'); return; }
+      if (!designation) { alert('Please select your designation.'); return; }
+
+      // collect all classes from cards
+      const cards = document.querySelectorAll('[id^="classCard_"]');
+      if (cards.length === 0) { alert('Please add at least one class.'); return; }
+
+      // Check if at least one PG class is selected
+      let hasPGClass = false;
+      cards.forEach(card => {
+        const classType = card.querySelector('select[data-classtype]').value;
+        if (classType === 'PG') {
+          hasPGClass = true;
+        }
+      });
+      if (!hasPGClass) {
+        alert('You must select at least one PG (MCA) class.');
+        return;
+      }
+
+      const classes = [];
+      let hasError = false;
+      const allSelectedSubjects = new Map(); // classKey -> Set of subjects
+      
+      cards.forEach(card => {
+        const classType = card.querySelector('select[data-classtype]').value;
+        const section = card.querySelector('select[data-section]').value;
+        const year = card.querySelector('select[data-year]').value;
+        const semester = card.querySelector('select[data-semester]').value;
+        const labCap = false;
+
+        // read from hidden JSON preference field
+        let prefData = {};
+        try { prefData = JSON.parse(card.querySelector('input[data-subjects]').value || '{}'); } catch(e) {}
+        const subjects = Object.keys(prefData);
+        
+        if (subjects.length === 0) {
+          alert('Please select at least one subject for each class.');
+          hasError = true;
+          return;
+        }
+
+        // Check for duplicate subjects within this submission
+        const classKey = `${classType}_${section}_${year}_${semester}`;
+        if (!allSelectedSubjects.has(classKey)) {
+          allSelectedSubjects.set(classKey, new Set());
+        }
+        const classSubjects = allSelectedSubjects.get(classKey);
+        
+        for (let subject of subjects) {
+          if (classSubjects.has(subject)) {
+            alert(`Subject "${subject}" is selected multiple times for the same class. Please select each subject only once.`);
+            hasError = true;
+            return;
+          }
+          classSubjects.add(subject);
+        }
+
+        let spec = '';
+        if (classType === 'UG' && year === 'Y3') {
+          spec = card.querySelector('select[data-spec]').value;
+          if (!spec) {
+            alert('Please select a specialization for Year 3 UG classes.');
+            hasError = true;
+            return;
+          }
+        }
+
+        // build subjectPreferences: [{ name, preference }] sorted by preference
+        const subjectPreferences = subjects.map(s => ({
+          name: s,
+          preference: prefData[s]?.preference || 1
+        })).sort((a, b) => a.preference - b.preference);
+
+        // enforce maximum preference scope 1..5
+        if (subjectPreferences.some(sp => sp.preference < 1 || sp.preference > 5)) {
+          alert('Preference numbers must be between 1 and 5 for each selected subject.');
+          hasError = true;
+          return;
+        }
+
+        classes.push({ classType, section, year, semester, subjects, subjectPreferences, specialization: spec });
+      });
+
+      if (hasError) return;
+
+      const entry = { name, email, designation, classes, days, submittedAt: new Date().toISOString() };
+
+      const key = 'teachers_data';
+      const existing = safeGetJSONNoWrite(key, []);
+      existing.push(entry);
+      localStorage.setItem(key, JSON.stringify(existing));
+
+      // Save to temporary storage for upload page
+      localStorage.setItem('teacher_submission_temp', JSON.stringify(entry));
+
+      alert('Submission saved! Now you will upload subject details.');
+      // Redirect to upload page
+      setTimeout(() => {
+        window.location.href = 'upload-subjects.html';
+      }, 300);
+    });
+
+    // initialize
+    initializeSubjects();
+    createDaysCheckboxes();
+    addClassCard();
+
+    // ── SHOW ASSIGNED SUBJECTS & TIMETABLE FROM COORDINATOR ──
+    const KA  = 'coord_assignments';
+    const KTT = 'coord_timetable';
+    const DAYS    = ['Monday','Tuesday','Wednesday','Thursday','Friday'];
+    const PERIODS = ['8:30–9:20','9:20–10:10','10:30–11:20','11:20–12:00','1:00–1:50','1:50–2:40'];
+
+    function getMyId() {
+      // match by email or name against stored teachers_data
+      const name  = document.getElementById('name').value.trim();
+      const email = document.getElementById('email').value.trim();
+      // also check sessionStorage for logged-in faculty
+      const sessEmail = sessionStorage.getItem('faculty_email');
+      const sessName  = sessionStorage.getItem('faculty_name');
+      return (sessEmail||email||sessName||name||'').trim();
+    }
+
+    function renderAssignedSubjects() {
+      try {
+        const myId   = getMyId();
+        const assigns = JSON.parse(localStorage.getItem(KA)||'[]');
+        const mine    = assigns.filter(a => a.facultyId === myId || a.facultyName === myId);
+
+        const sec = document.getElementById('assignedSection');
+        const con = document.getElementById('assignedSubjectsContainer');
+        if (!mine.length) { sec.style.display='none'; return; }
+        sec.style.display='block';
+
+        con.innerHTML = `
+          <table style="width:100%;border-collapse:collapse">
+            <thead><tr style="background:#f7f9fc">
+              <th style="padding:9px 12px;text-align:left;font-size:.78rem;color:#6b7e94;text-transform:uppercase;border-bottom:2px solid #dde5ef">Subject</th>
+              <th style="padding:9px 12px;text-align:left;font-size:.78rem;color:#6b7e94;text-transform:uppercase;border-bottom:2px solid #dde5ef">Curriculum</th>
+              <th style="padding:9px 12px;text-align:left;font-size:.78rem;color:#6b7e94;text-transform:uppercase;border-bottom:2px solid #dde5ef">Assigned On</th>
+            </tr></thead>
+            <tbody>${mine.map(a=>`<tr>
+              <td style="padding:10px 12px;font-weight:600;border-bottom:1px solid #f0f4f9">${a.subjectName}</td>
+              <td style="padding:10px 12px;color:#6b7e94;font-size:.85rem;border-bottom:1px solid #f0f4f9">${(a.curriculumKey||'').replace(/_/g,' ')}</td>
+              <td style="padding:10px 12px;color:#6b7e94;font-size:.82rem;border-bottom:1px solid #f0f4f9">${new Date(a.assignedAt).toLocaleDateString('en-IN',{day:'2-digit',month:'short',year:'numeric'})}</td>
+            </tr>`).join('')}</tbody>
+          </table>`;
+      } catch(e) { console.warn(e); }
+    }
+
+    function renderMyTimetable() {
+      try {
+        const myId = getMyId();
+        const tt   = JSON.parse(localStorage.getItem(KTT)||'{}');
+
+        // check if I have any slots
+        let hasSlots = false;
+        DAYS.forEach(d=>{ PERIODS.forEach(p=>{ if(tt[d]?.[p]?.facultyId===myId || tt[d]?.[p]?.facultyName===myId) hasSlots=true; }); });
+
+        const sec = document.getElementById('timetableSection');
+        const tbl = document.getElementById('myTimetable');
+        if (!hasSlots) { sec.style.display='none'; return; }
+        sec.style.display='block';
+
+        const thStyle = 'padding:8px 10px;background:#1a3a5c;color:white;font-size:.75rem;text-align:center;border:1px solid rgba(255,255,255,.12)';
+        const tdStyle = 'border:1px solid #dde5ef;padding:5px;height:70px;vertical-align:top;min-width:110px;';
+        let html = `<tr><th style="${thStyle}">Day</th>${PERIODS.map(p=>`<th style="${thStyle}">${p}</th>`).join('')}</tr>`;
+        html += DAYS.map(day=>{
+          const cells = PERIODS.map(period=>{
+            const s = tt[day]?.[period];
+            const mine = s && (s.facultyId===myId || s.facultyName===myId);
+            if (mine) return `<td style="${tdStyle}">
+              <div style="background:linear-gradient(135deg,#e8f0fc,#d4e4f7);border-radius:7px;padding:5px 7px;height:100%;border-left:3px solid #2563a8;font-size:.73rem;line-height:1.4">
+                <div style="font-weight:700;color:#1a3a5c">${s.subjectName}</div>
+                <div style="color:#aab5c4;font-size:.65rem;margin-top:2px">${(s.curriculumKey||'').replace(/_/g,' ')}</div>
+              </div></td>`;
+            return `<td style="${tdStyle};background:#fafbfc"><span style="color:#cdd5de;font-size:.75rem">—</span></td>`;
+          }).join('');
+          return `<tr><td style="${tdStyle}background:#f7f9fc;font-weight:700;font-size:.82rem;color:#1a3a5c;text-align:center;vertical-align:middle">${day}</td>${cells}</tr>`;
+        }).join('');
+        tbl.innerHTML = html;
+      } catch(e) { console.warn(e); }
+    }
+
+    // show on page load if session has a logged-in faculty
+    function initFacultyView() {
+      if (sessionStorage.getItem('faculty_email') || sessionStorage.getItem('faculty_name')) {
+        renderAssignedSubjects();
+        renderMyTimetable();
+      }
+    }
+
+    // also re-render after form submit fills in name/email
+    document.getElementById('teacherForm').addEventListener('submit', function() {
+      setTimeout(()=>{ renderAssignedSubjects(); renderMyTimetable(); }, 400);
+    }, true);
+
+    // poll every 5 seconds so it stays live without refresh
+    initFacultyView();
+    setInterval(()=>{ renderAssignedSubjects(); renderMyTimetable(); }, 5000);
+    window.addEventListener('storage', ()=>{ renderAssignedSubjects(); renderMyTimetable(); });
+
+    function logout() {
+      sessionStorage.clear();
+      // Replace current history entry with login page to prevent back navigation
+      window.history.replaceState(null, null, 'index.html');
+      window.location.href = 'index.html';
+    }
+
+    // Auto-logout on back button press
+    window.addEventListener('popstate', function(event) {
+      // Clear session and redirect to login when back button is pressed
+      sessionStorage.clear();
+      window.history.replaceState(null, null, 'index.html');
+      window.location.href = 'index.html';
+    });
+
+    // Prevent adding to history when page loads (so back button works)
+    window.history.replaceState(null, null, window.location.href);
+
+    document.getElementById('logoutBtn').addEventListener('click', logout);
+  </script>
+</body>
+</html>
